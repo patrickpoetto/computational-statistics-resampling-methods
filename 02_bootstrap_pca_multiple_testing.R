@@ -21,6 +21,30 @@ library(knitr)
 library(kableExtra)
 
 ########################################################################
+# [Reproducibility note -- added by reviewer]
+# Neither the board-games export nor the Spotify export referenced below
+# was bundled with the original, OCR-reconstructed script. They are
+# replaced here with clearly-labelled SYNTHETIC stand-ins built by
+# scripts_build_data.R (data/boardgames.csv, data/spotify.csv), designed
+# to have the right column names/types -- and, for the board games data,
+# a correlation structure that reproduces the qualitative pattern the
+# original report describes (difficulty correlating with playtime and
+# minimum age) -- so the statistical machinery below runs end-to-end.
+# They are NOT the real coursework data; see the README for details.
+#
+# A second note on an apparent mislabeling in the original report: the
+# "2f" regression below is introduced under the "PART 2 -- SPOTIFY"
+# heading, but its formula (`average_rating ~ .`) and its reported
+# significant predictors (yearpublished, playingtime, minage,
+# total_owners, average_weight) are board-games column names, not
+# Spotify audio features. We therefore have section 2f reuse the (raw,
+# unscaled) board-games data -- not the Spotify data -- for that
+# regression, which is what the original code's variable names actually
+# imply; the Spotify data (`df2`) is used only where the code references
+# `first_auth`/`pop` (permutation tests and multiple testing, 2c-2g).
+########################################################################
+
+########################################################################
 # PART 1 -- BOARD GAMES DATASET
 #
 # Variables: yearpublished, minplayers, maxplayers, playingtime, minage,
@@ -30,11 +54,13 @@ library(kableExtra)
 # have been dropped).
 ########################################################################
 
+boardgames_raw <- read.csv("data/boardgames.csv")
+
 ########################################################################
 # 1b. Covariance / correlation matrix
 ########################################################################
 
-df <- df[, -1:-2]
+df <- boardgames_raw[, -1:-2] # drop game_id, name
 df <- data.frame(scale(df))
 
 sample_cov <- cov(df)
@@ -120,7 +146,11 @@ for (i in 1:6) {
 ########################################################################
 
 # Sanity check: total variance == sum of eigenvalues
-sum(eigen(sample_cov)$values) == sum(diag(sample_cov)) # TRUE
+# [Bug fix: exact `==` on floating-point sums is fragile and was observed
+#  to return FALSE here (trace and sum-of-eigenvalues differ at the ~1e-13
+#  level, as expected from floating-point arithmetic) -- use a numerical
+#  tolerance instead, as the comment's intent ("TRUE") always implied.]
+isTRUE(all.equal(sum(eigen(sample_cov)$values), sum(diag(sample_cov)))) # TRUE
 
 theta <- numeric(ncol(df))
 for (i in 1:length(theta)) {
@@ -171,10 +201,16 @@ length(j_star_boot[j_star_boot == 5]) / length(j_star_boot) # 0.08480781 -- in ~
 ########################################################################
 # 2f. Linear model for average_rating and bootstrap of its coefficients
 #
-# `df` here refers to the Spotify-derived modelling data frame (distinct
-# from the board-games `df` used in Part 1); `sub_data` subsamples 5000
-# rows for computational tractability.
+# `df` here is reassigned to the RAW (unscaled) board-games data frame,
+# dropping only the id/name columns -- see the reproducibility note at
+# the top of the file for why (the regression formula and its reported
+# predictors are board-games column names, not Spotify audio features,
+# despite the "PART 2 -- SPOTIFY" section heading in the original
+# write-up). `sub_data` subsamples 5000 rows for computational
+# tractability.
 ########################################################################
+
+df <- boardgames_raw[, -1:-2] # raw (unscaled) board-games data, fresh copy
 
 set.seed(abs(636 - 555 - 3226))
 ind <- sample(1:nrow(df), 5000, FALSE)
@@ -239,6 +275,21 @@ res_game_jack <- jack_reg_game(sub_data)
 # popularity value.
 ########################################################################
 
+df2 <- read.csv("data/spotify.csv")
+
+# `logit()` was not defined anywhere in the extracted source (likely
+# `car::logit`, which was not loadable on this machine due to an
+# unrelated compiler-toolchain failure in one of its dependencies).
+# Reimplemented inline with the same adjust-and-rescale behaviour as
+# `car::logit(x, percents = TRUE, adjust = 0.025)`: rescale a 0-100
+# popularity score to (0,1), nudge values away from the 0/1 boundary so
+# log-odds stays finite, then take the log-odds.
+logit <- function(x, adjust = 0.025) {
+  p <- x / 100
+  p <- p * (1 - 2 * adjust) + adjust
+  log(p / (1 - p))
+}
+
 pop_est <- function(df, auth_X, auth_Y, songs) {
   songs_X <- df$pop[df$first_auth == auth_X]
   songs_Y <- df$pop[df$first_auth == auth_Y]
@@ -288,8 +339,29 @@ for (i in 1:(length(authors) - 1)) {
 # groups (`cutree`) to visualize which artists have statistically
 # indistinguishable popularity. (Only the method is described in the
 # original write-up; the clustering call itself was not part of the
-# extracted code and is therefore not reproduced verbatim here.)
+# extracted code.)
+#
+# [Added by reviewer, clearly labelled as a reconstruction rather than
+#  extracted text: a direct implementation of the method described
+#  above -- 1 - p_value dissimilarity, average-linkage hclust, cut into
+#  5 groups.]
 ########################################################################
+
+p_value_dist <- p_value_matrix
+diag(p_value_dist) <- 1 # same artist vs. itself: p-value 1 -> distance 0
+rownames(p_value_dist) <- colnames(p_value_dist) <- authors
+
+dist_pop <- as.dist(1 - p_value_dist)
+hc_pop <- hclust(dist_pop, method = "average")
+clusters_pop <- cutree(hc_pop, k = 5)
+
+plot(hc_pop,
+  labels = authors, main = "Artists clustered by pairwise popularity similarity",
+  xlab = "1 - permutation p-value", sub = ""
+)
+rect.hclust(hc_pop, k = 5)
+
+# table(clusters_pop) / split(authors, clusters_pop) to inspect membership
 
 ########################################################################
 # 2e/f/g. One-sample tests per artist + multiple-testing correction

@@ -60,14 +60,23 @@ library(mlbench)
 # already has low variance.
 ########################################################################
 
-# `data` is the bike-sharing data frame (date, weather, season, etc. -> cnt)
-ols <- lm(cnt ~ ., data = data)
+# `bike_data` is the bike-sharing data frame (date, weather, season, etc. -> cnt).
+# [Reproducibility note: the original script named this data frame `data`,
+#  which shadows base R's `data()` function; renamed to `bike_data` here.
+#  The dataset itself was not bundled with the reconstructed script -- see
+#  data/README.md / scripts_build_data.R: this is a real public bike-sharing
+#  dataset (Fanaee-T & Gama, UCI), cleaned to drop the id/date columns and
+#  the casual/registered columns (which sum to `cnt` and would otherwise
+#  give the OLS a trivially perfect fit).]
+bike_data <- read.csv("data/bike_sharing.csv")
+
+ols <- lm(cnt ~ ., data = bike_data)
 summary(ols)
 
 # Train/test split (90% / 10%)
-train_indices <- sample(1:nrow(data), 0.9 * nrow(data))
-train_data <- data[train_indices, ]
-test_data <- data[-train_indices, ]
+train_indices <- sample(1:nrow(bike_data), 0.9 * nrow(bike_data))
+train_data <- bike_data[train_indices, ]
+test_data <- bike_data[-train_indices, ]
 
 # Bootstrap the training data B = 100 times
 n_bootstraps <- 100
@@ -184,6 +193,12 @@ reg_tree_boot <- function(df, b, y) {
   for (i in 1:b) {
     train_data <- slice_sample(train_i, n = nrow(train_i), replace = TRUE)
     model <- rpart(formula, data = train_data)
+    # [Code-quality note: `rpart::prune()`'s signature is `prune(tree, cp,
+    #  ...)` -- it has no `newdata` argument, so `newdata = train_i` below
+    #  is silently swallowed by `...` and has no effect (not an error, but
+    #  not doing anything either; harmless here since prune only needs
+    #  `tree`/`cp`, but likely a leftover from an earlier draft). Left as
+    #  in the extracted source since removing it does not change results.]
     pruned_tree <- rpart::prune(model, cp = 0.01, newdata = train_i)
     predictions <- predictions + predict(pruned_tree, newdata = test_i)
   }
@@ -196,14 +211,22 @@ reg_tree_boot <- function(df, b, y) {
 # 5. Data: Boston Housing, Ozone, and 3 simulated Friedman benchmarks
 ########################################################################
 
-# Boston Housing (UCI)
-housing <- read.table("housing.csv", quote = "\"", comment.char = "")
+# Boston Housing (UCI).
+# [Reproducibility note: housing.csv was not bundled with the original
+#  script. data/housing.csv is MASS::Boston written out in the classic
+#  UCI column order (see scripts_build_data.R) -- real data, not synthetic.]
+housing <- read.table("data/housing.csv", quote = "\"", comment.char = "")
 colnames(housing) <- c(
   "CRIM", "ZN", "INDUS", "CHAS", "NOX", "RM", "AGE", "DIS",
   "RAD", "TAX", "PTRATIO", "B", "LSTAT", "y"
 )
 
-# Ozone (response column renamed to "y" for the generic formula helper)
+# Ozone (response column renamed to "y" for the generic formula helper).
+# [Reproducibility note: the `ozone` object was not bundled with the
+#  original script either. data/ozone.csv is mlbench::Ozone with the
+#  response (V4, daily max one-hour ozone) already in column 1 and
+#  restricted to complete cases (see scripts_build_data.R) -- real data.]
+ozone <- read.csv("data/ozone.csv")
 colnames(ozone)[1] <- "y"
 
 # Simulated Friedman benchmark datasets (mlbench), B = 1000 draws each,
